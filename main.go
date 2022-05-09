@@ -1,119 +1,62 @@
 package main
 
 import (
-	"encoding/json"
-	"encoding/xml"
 	"fmt"
-	"io"
-	"net/http"
+	"log"
+	"os"
+	"strconv"
 	"time"
 
-	"golang.org/x/text/encoding/charmap"
+	"github.com/SolidShake/alfred-bot/internal/api/bank"
+	"github.com/SolidShake/alfred-bot/internal/api/binance"
+	"github.com/SolidShake/alfred-bot/internal/api/hackernews"
+	b "github.com/SolidShake/alfred-bot/internal/bot"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/joho/godotenv"
 )
 
-type Valute struct {
-	XMLName  xml.Name `xml:"Valute"`
-	CharCode string   `xml:"CharCode"`
-	Name     string   `xml:"Name"`
-	Value    string   `xml:"Value"`
-}
-
-type ValCurs struct {
-	XMLName xml.Name `xml:"ValCurs"`
-	Date    string   `xml:"Date,attr"`
-	Valutes []Valute `xml:"Valute"`
-}
-
-type Vals struct {
-	Code  string `json:"code"`
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-type Response struct {
-	Vals []Vals `json:"vals"`
-}
-
-const API_URL = "https://www.cbr.ru/scripts/XML_daily.asp"
-
+//@TODO add linter
 func main() {
-	result, _ := getCurrency("")
-	response, _ := createResponse(*result)
-	fmt.Println(string(response))
-
-	prevDay, _ := getPreviousDate(*result)
-	resultPrev, _ := getCurrency("?date_req=" + prevDay)
-	responsePrev, _ := createResponse(*resultPrev)
-	fmt.Println(string(responsePrev))
-}
-
-func getCurrency(queryParams string) (*ValCurs, error) {
-	resp, err := http.Get(API_URL + queryParams) //https://www.cbr.ru/scripts/XML_daily.asp?date_req=29/04/2022
+	err := godotenv.Load()
 	if err != nil {
-		return nil, fmt.Errorf("get currency error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("invalid status code: %w", err)
+		log.Fatal("error loading .env file")
 	}
 
-	var result ValCurs
-	decoder := xml.NewDecoder(resp.Body)
-	decoder.CharsetReader = makeCharsetReader
-	err = decoder.Decode(&result)
+	bot, err := tgbotapi.NewBotAPI(os.Getenv("TGBOT_API_KEY"))
 	if err != nil {
-		return nil, fmt.Errorf("xml unmarshal error: %w", err)
+		fmt.Println(err)
+		return
 	}
 
-	return &result, nil
-}
-
-// //xml unmarshal error: xml: encoding "windows-1251" declared but Decoder.CharsetReader is nil
-func makeCharsetReader(charset string, input io.Reader) (io.Reader, error) {
-	if charset == "windows-1251" {
-		return charmap.Windows1251.NewDecoder().Reader(input), nil
+	debug, err := strconv.ParseBool(os.Getenv("DEBUG"))
+	if err == nil {
+		bot.Debug = debug
 	}
 
-	return nil, fmt.Errorf("unknown charset: %s", charset)
-}
+	fullResponse := b.FullResponse{
+		Blocks: []string{
+			"***Доброе утро*** \xF0\x9F\x8C\x9E",
+			bank.CreateBankResponse(),
+			binance.GetResponse(),
+			hackernews.GetResponse(),
+		},
+	}
 
-func isCurrsUsed(code string) bool {
-	// to const
-	currsList := []string{"USD", "EUR"}
-	for _, v := range currsList {
-		if code == v {
-			return true
+	chatID, _ := strconv.ParseInt(os.Getenv("DEBUG_CHAT_ID"), 10, 64)
+
+	ticker := time.NewTicker(5 * time.Second)
+	stop := make(chan struct{})
+	defer close(stop)
+	for {
+		select {
+		case <-ticker.C:
+			msg := tgbotapi.NewMessage(chatID, fullResponse.ToString())
+			msg.ParseMode = "markdown"
+			msg.DisableWebPagePreview = true
+			bot.Send(msg)
+		case <-stop:
+			ticker.Stop()
+			return
 		}
 	}
-
-	return false
-}
-
-func createResponse(result ValCurs) ([]byte, error) {
-	var response Response
-	for _, valute := range result.Valutes {
-		if isCurrsUsed(valute.CharCode) {
-			response.Vals = append(
-				response.Vals,
-				Vals{valute.CharCode, valute.Name, valute.Value},
-			)
-		}
-	}
-
-	bytes, err := json.Marshal(&response)
-	if err != nil {
-		return nil, fmt.Errorf("marshal error %w", err)
-	}
-
-	return bytes, nil
-}
-
-func getPreviousDate(result ValCurs) (string, error) {
-	dataDate, err := time.Parse("02.01.2006", result.Date)
-	if err != nil {
-		return "", fmt.Errorf("date parse error: %w", err)
-	}
-
-	return dataDate.Add(-24 * time.Hour).Format("02/01/2006"), nil
 }
