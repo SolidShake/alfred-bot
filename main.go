@@ -17,9 +17,11 @@ import (
 
 //@TODO add linter
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("error loading .env file")
+	if os.Getenv("APP_ENV") != "prod" {
+		err := godotenv.Load()
+		if err != nil {
+			log.Fatal("error loading .env file")
+		}
 	}
 
 	bot, err := tgbotapi.NewBotAPI(os.Getenv("TGBOT_API_KEY"))
