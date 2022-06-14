@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
-	"time"
 
 	"github.com/SolidShake/alfred-bot/internal/api/bank"
 	"github.com/SolidShake/alfred-bot/internal/api/binance"
@@ -13,6 +13,7 @@ import (
 	b "github.com/SolidShake/alfred-bot/internal/bot"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
+	"github.com/robfig/cron/v3"
 )
 
 //@TODO add linter
@@ -46,19 +47,16 @@ func main() {
 
 	chatID, _ := strconv.ParseInt(os.Getenv("DEBUG_CHAT_ID"), 10, 64)
 
-	ticker := time.NewTicker(5 * time.Second)
-	stop := make(chan struct{})
-	defer close(stop)
-	for {
-		select {
-		case <-ticker.C:
-			msg := tgbotapi.NewMessage(chatID, fullResponse.ToString())
-			msg.ParseMode = "markdown"
-			msg.DisableWebPagePreview = true
-			bot.Send(msg)
-		case <-stop:
-			ticker.Stop()
-			return
-		}
-	}
+	c := cron.New()
+	c.AddFunc("0 9 * * *", func() {
+		msg := tgbotapi.NewMessage(chatID, fullResponse.ToString())
+		msg.ParseMode = "markdown"
+		msg.DisableWebPagePreview = true
+		bot.Send(msg)
+	})
+	go c.Start()
+
+	sig := make(chan os.Signal)
+	signal.Notify(sig, os.Interrupt, os.Kill)
+	<-sig
 }
